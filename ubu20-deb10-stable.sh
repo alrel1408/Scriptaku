@@ -769,6 +769,11 @@ print_install "Restarting  All Packet"
 # Daemon reload first
 systemctl daemon-reload
 
+# Create required directories
+mkdir -p /run/sshd
+mkdir -p /var/log/xray
+chown www-data:www-data /var/log/xray
+
 # Enable all services
 systemctl enable nginx
 systemctl enable xray  
@@ -780,7 +785,6 @@ systemctl enable haproxy
 systemctl enable netfilter-persistent
 systemctl enable ws
 systemctl enable vnstat
-systemctl enable ssh
 
 # Start all services
 systemctl start netfilter-persistent
@@ -793,13 +797,16 @@ systemctl start cron
 systemctl start haproxy
 systemctl start ws
 systemctl start vnstat
-systemctl start ssh
 
 # Final restart for stability
 systemctl restart nginx
 systemctl restart xray
 systemctl restart haproxy
 systemctl restart ws
+
+# Fix any potential service issues
+sleep 3
+systemctl --failed | grep failed && systemctl reset-failed
 
 history -c
 echo "unset HISTFILE" >> /etc/profile
@@ -821,6 +828,17 @@ function menu(){
     mv menu/* /usr/local/sbin
     rm -rf menu
     rm -rf menu.zip
+    
+    # Fix semua referensi register yang masih ada
+    sed -i 's|https://raw.githubusercontent.com/alrel1408/AutoScript/main/Register|# Register system disabled|g' /usr/local/sbin/*
+    sed -i '/data_ip=.*Register system disabled/c\data_ip=""' /usr/local/sbin/*
+    sed -i '/curl.*Register system disabled/d' /usr/local/sbin/*
+    
+    # Update branding ke AlrelShop
+    sed -i 's|Vallstore|AlrelShop|g' /usr/local/sbin/*
+    sed -i 's|VALLSTORE|ALRELSHOP|g' /usr/local/sbin/*
+    sed -i 's|082300115583|082285851668|g' /usr/local/sbin/*
+    sed -i 's|+6282300115583|+6282285851668|g' /usr/local/sbin/*
     
     # Pastikan menu bisa diakses dari PATH
     if ! grep -q "/usr/local/sbin" /etc/environment; then

@@ -27,12 +27,21 @@ fun_bar() {
     tput cnorm
 }
 res1() {
-    wget https://raw.githubusercontent.com/alrel1408/scriptaku/main/menu/menu.zip
+    wget -O menu.zip https://raw.githubusercontent.com/alrel1408/scriptaku/main/menu/menu.zip
     unzip menu.zip
     chmod +x menu/*
     mv menu/* /usr/local/sbin
     rm -rf menu
     rm -rf menu.zip
+    
+    # Pastikan symlink menu ada
+    ln -sf /usr/local/sbin/menu /usr/bin/menu
+    
+    # Update PATH jika diperlukan
+    if ! grep -q "/usr/local/sbin" /etc/environment; then
+        echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' >> /etc/environment
+    fi
+    
     rm -rf update.sh
 }
 netfilter-persistent

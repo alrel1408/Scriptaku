@@ -815,12 +815,23 @@ print_success "All Packet"
 function menu(){
     clear
     print_install "Memasang Menu Packet"
-    wget ${REPO}menu/menu.zip
+    wget -O menu.zip ${REPO}menu/menu.zip
     unzip menu.zip
     chmod +x menu/*
     mv menu/* /usr/local/sbin
     rm -rf menu
     rm -rf menu.zip
+    
+    # Pastikan menu bisa diakses dari PATH
+    if ! grep -q "/usr/local/sbin" /etc/environment; then
+        echo 'PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' >> /etc/environment
+    fi
+    
+    # Update PATH untuk session saat ini
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    
+    # Buat symlink menu ke /usr/bin juga
+    ln -sf /usr/local/sbin/menu /usr/bin/menu
 }
 
 # Membaut Default Menu 
@@ -828,13 +839,26 @@ function profile(){
 clear
     cat >/root/.profile <<EOF
 # ~/.profile: executed by Bourne-compatible login shells.
-if [ "$BASH" ]; then
+if [ "\$BASH" ]; then
     if [ -f ~/.bashrc ]; then
         . ~/.bashrc
     fi
 fi
+# Set PATH
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 mesg n || true
 menu
+EOF
+
+    # Tambahkan juga ke bashrc untuk memastikan
+    cat >/root/.bashrc <<EOF
+# ~/.bashrc: executed by bash for non-login shells.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Auto run menu on login
+if [ -t 0 ]; then
+    menu
+fi
 EOF
 
 cat >/etc/cron.d/xp_all <<-END

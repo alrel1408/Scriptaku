@@ -795,8 +795,10 @@ systemctl start dropbear
 systemctl start openvpn
 systemctl start cron
 systemctl start haproxy
-systemctl start ws
 systemctl start vnstat
+
+# Disable SSH service jika dropbear sudah aktif (hindari conflict port 22)
+systemctl disable ssh >/dev/null 2>&1 || true
 
 # Final restart for stability
 systemctl restart nginx
@@ -834,11 +836,24 @@ function menu(){
     sed -i '/data_ip=.*Register system disabled/c\data_ip=""' /usr/local/sbin/*
     sed -i '/curl.*Register system disabled/d' /usr/local/sbin/*
     
+    # Fix function checking_sc yang menyebabkan permission denied
+    sed -i '/checking_sc() {/,/^}/c\
+checking_sc() {\
+  # Register system disabled - always allow\
+  echo -ne\
+}' /usr/local/sbin/*
+    
+    # Remove register check logic
+    sed -i '/useexp.*data_ip/d' /usr/local/sbin/*
+    sed -i '/if.*date_list.*useexp/,/fi/d' /usr/local/sbin/*
+    
     # Update branding ke AlrelShop
     sed -i 's|Vallstore|AlrelShop|g' /usr/local/sbin/*
     sed -i 's|VALLSTORE|ALRELSHOP|g' /usr/local/sbin/*
+    sed -i 's|𝗩𝗮𝗹𝗹𝘀𝘁𝗼𝗿𝗲|𝗔𝗹𝗿𝗲𝗹𝗦𝗵𝗼𝗽|g' /usr/local/sbin/*
     sed -i 's|082300115583|082285851668|g' /usr/local/sbin/*
     sed -i 's|+6282300115583|+6282285851668|g' /usr/local/sbin/*
+    sed -i 's|+6285974151519|+6282285851668|g' /usr/local/sbin/*
     
     # Pastikan menu bisa diakses dari PATH
     if ! grep -q "/usr/local/sbin" /etc/environment; then

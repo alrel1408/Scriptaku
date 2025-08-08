@@ -27,6 +27,7 @@ fun_bar() {
     tput cnorm
 }
 res1() {
+    # Paksa gunakan RAW + branch main
     wget -O menu.zip https://raw.githubusercontent.com/alrel1408/scriptaku/main/menu/menu.zip
     unzip menu.zip
     chmod +x menu/*

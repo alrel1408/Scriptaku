@@ -99,7 +99,8 @@ gem install lolcat
 apt install wondershaper -y
 clear
 # REPO    
-    REPO="https://raw.githubusercontent.com/alrel1408/scriptaku/"
+    # Gunakan path RAW dengan branch 'main' agar semua unduhan valid
+    REPO="https://raw.githubusercontent.com/alrel1408/scriptaku/main/"
 
 ####
 start=$(date +%s)
@@ -258,6 +259,10 @@ function base_package() {
     echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
     echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
     sudo apt-get install -y speedtest-cli vnstat libnss3-dev libnspr4-dev pkg-config libpam0g-dev libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-nss-dev flex bison make libnss3-tools libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr libxml-parser-perl build-essential gcc g++ python htop lsof tar wget curl ruby zip unzip p7zip-full python3-pip libc6 util-linux build-essential msmtp-mta ca-certificates bsd-mailx iptables iptables-persistent netfilter-persistent net-tools openssl ca-certificates gnupg gnupg2 ca-certificates lsb-release gcc shc make cmake git screen socat xz-utils apt-transport-https gnupg1 dnsutils cron bash-completion ntpdate chrony jq openvpn easy-rsa
+    
+    # Pastikan netfilter-persistent terinstall dengan benar
+    systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+    systemctl start netfilter-persistent >/dev/null 2>&1 || true
     print_success "Packet Yang Dibutuhkan"
     
 }
@@ -434,6 +439,8 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
     # // Ambil Config Server
     wget -O /etc/xray/config.json "${REPO}config/config.json" >/dev/null 2>&1
     wget -O /etc/systemd/system/runn.service "${REPO}files/runn.service" >/dev/null 2>&1
+    # Set proper permissions for service file
+    chmod 644 /etc/systemd/system/runn.service
     #chmod +x /usr/local/bin/xray
     domain=$(cat /etc/xray/domain)
     IPVS=$(cat /etc/xray/ipvps)
@@ -452,12 +459,13 @@ bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release
     
 cat /etc/xray/xray.crt /etc/xray/xray.key | tee /etc/haproxy/hap.pem
 
-    # > Set Permission
-    chmod +x /etc/systemd/system/runn.service
+    # > Set Permission (service files should be 644, not executable)
+    chmod 644 /etc/systemd/system/runn.service
 
     # > Create Service
     rm -rf /etc/systemd/system/xray.service.d
     cat >/etc/systemd/system/xray.service <<EOF
+[Unit]
 Description=Xray Service
 Documentation=https://github.com
 After=network.target nss-lookup.target
@@ -477,6 +485,16 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 
 EOF
+
+    # Pastikan service file valid
+    chmod 644 /etc/systemd/system/xray.service
+    
+    # Reload systemd daemon setelah membuat semua service files
+    systemctl daemon-reload
+    
+    # Test nginx configuration
+    nginx -t >/dev/null 2>&1 || echo "Warning: nginx config test failed, will retry after SSL setup"
+    
 print_success "Konfigurasi Packet"
 }
 
@@ -565,18 +583,26 @@ chmod +x /usr/local/kyt/udp-mini
 wget -q -O /etc/systemd/system/udp-mini-1.service "${REPO}files/udp-mini-1.service"
 wget -q -O /etc/systemd/system/udp-mini-2.service "${REPO}files/udp-mini-2.service"
 wget -q -O /etc/systemd/system/udp-mini-3.service "${REPO}files/udp-mini-3.service"
-systemctl disable udp-mini-1
-systemctl stop udp-mini-1
-systemctl enable udp-mini-1
-systemctl start udp-mini-1
-systemctl disable udp-mini-2
-systemctl stop udp-mini-2
-systemctl enable udp-mini-2
-systemctl start udp-mini-2
-systemctl disable udp-mini-3
-systemctl stop udp-mini-3
-systemctl enable udp-mini-3
-systemctl start udp-mini-3
+# Pastikan service files valid dan set permissions
+chmod 644 /etc/systemd/system/udp-mini-1.service
+chmod 644 /etc/systemd/system/udp-mini-2.service  
+chmod 644 /etc/systemd/system/udp-mini-3.service
+
+# Reload daemon after creating service files
+systemctl daemon-reload
+
+systemctl disable udp-mini-1 >/dev/null 2>&1 || true
+systemctl stop udp-mini-1 >/dev/null 2>&1 || true
+systemctl enable udp-mini-1 >/dev/null 2>&1 || true
+systemctl start udp-mini-1 >/dev/null 2>&1 || true
+systemctl disable udp-mini-2 >/dev/null 2>&1 || true
+systemctl stop udp-mini-2 >/dev/null 2>&1 || true
+systemctl enable udp-mini-2 >/dev/null 2>&1 || true
+systemctl start udp-mini-2 >/dev/null 2>&1 || true
+systemctl disable udp-mini-3 >/dev/null 2>&1 || true
+systemctl stop udp-mini-3 >/dev/null 2>&1 || true
+systemctl enable udp-mini-3 >/dev/null 2>&1 || true
+systemctl start udp-mini-3 >/dev/null 2>&1 || true
 print_success "Limit IP Service"
 }
 
@@ -644,7 +670,19 @@ clear
 print_install "Menginstall OpenVPN"
 #OpenVPN
 wget ${REPO}files/openvpn &&  chmod +x openvpn && ./openvpn
-/etc/init.d/openvpn restart
+
+# Check if openvpn service was created and handle accordingly
+if [ -f /etc/systemd/system/openvpn.service ]; then
+    systemctl enable openvpn >/dev/null 2>&1 || true
+    systemctl start openvpn >/dev/null 2>&1 || true
+elif systemctl list-unit-files | grep -q "openvpn@"; then
+    # Standard openvpn installation uses openvpn@server.service
+    systemctl enable openvpn@server >/dev/null 2>&1 || true
+    systemctl start openvpn@server >/dev/null 2>&1 || true
+else
+    # Fallback to init.d script
+    /etc/init.d/openvpn restart >/dev/null 2>&1 || true
+fi
 print_success "OpenVPN"
 }
 
@@ -742,14 +780,18 @@ print_install "Menginstall ePro WebSocket Proxy"
     wget -O /usr/bin/ws "${REPO}files/ws" >/dev/null 2>&1
     wget -O /usr/bin/tun.conf "${REPO}config/tun.conf" >/dev/null 2>&1
     wget -O /etc/systemd/system/ws.service "${REPO}files/ws.service" >/dev/null 2>&1
-    chmod +x /etc/systemd/system/ws.service
+    chmod 644 /etc/systemd/system/ws.service
     chmod +x /usr/bin/ws
     chmod 644 /usr/bin/tun.conf
-systemctl disable ws
-systemctl stop ws
-systemctl enable ws
-systemctl start ws
-systemctl restart ws
+
+# Reload daemon after creating service file    
+systemctl daemon-reload
+
+systemctl disable ws >/dev/null 2>&1 || true
+systemctl stop ws >/dev/null 2>&1 || true
+systemctl enable ws >/dev/null 2>&1 || true
+systemctl start ws >/dev/null 2>&1 || true
+systemctl restart ws >/dev/null 2>&1 || true
 wget -q -O /usr/local/share/xray/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" >/dev/null 2>&1
 wget -q -O /usr/local/share/xray/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" >/dev/null 2>&1
 wget -O /usr/sbin/ftvpn "${REPO}files/ftvpn" >/dev/null 2>&1
@@ -795,37 +837,112 @@ chown www-data:www-data /run/xray
 systemctl stop ssh >/dev/null 2>&1 || true
 systemctl stop apache2 >/dev/null 2>&1 || true
 
-# Enable all services
-systemctl enable nginx
-systemctl enable xray  
-systemctl enable rc-local
-systemctl enable dropbear
-systemctl enable openvpn
-systemctl enable cron
-systemctl enable haproxy
-systemctl enable netfilter-persistent
-systemctl enable ws
-systemctl enable vnstat
-systemctl enable runn
-systemctl enable udp-mini-1
-systemctl enable udp-mini-2  
-systemctl enable udp-mini-3
+# Install netfilter-persistent if not exists
+if ! systemctl list-unit-files | grep -q netfilter-persistent; then
+    apt-get install -y iptables-persistent netfilter-persistent >/dev/null 2>&1
+fi
+
+# Unmask services that might be masked
+systemctl unmask runn >/dev/null 2>&1 || true
+systemctl unmask ws >/dev/null 2>&1 || true
+systemctl unmask udp-mini-1 >/dev/null 2>&1 || true
+systemctl unmask udp-mini-2 >/dev/null 2>&1 || true
+systemctl unmask udp-mini-3 >/dev/null 2>&1 || true
+systemctl unmask nginx >/dev/null 2>&1 || true
+systemctl unmask xray >/dev/null 2>&1 || true
+systemctl unmask haproxy >/dev/null 2>&1 || true
+
+# Reload daemon after unmask
+systemctl daemon-reload
+
+# Test nginx config
+nginx -t >/dev/null 2>&1 || true
+
+# Enable services only if they exist and aren't masked
+systemctl enable nginx >/dev/null 2>&1 || true
+systemctl enable xray >/dev/null 2>&1 || true  
+systemctl enable rc-local >/dev/null 2>&1 || true
+systemctl enable cron >/dev/null 2>&1 || true
+systemctl enable haproxy >/dev/null 2>&1 || true
+systemctl enable vnstat >/dev/null 2>&1 || true
+
+# Enable netfilter-persistent if exists
+if systemctl list-unit-files | grep -q netfilter-persistent; then
+    systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+fi
+
+# Enable custom services if they exist
+if [ -f /etc/systemd/system/runn.service ]; then
+    systemctl enable runn >/dev/null 2>&1 || true
+fi
+if [ -f /etc/systemd/system/ws.service ]; then
+    systemctl enable ws >/dev/null 2>&1 || true
+fi
+
+# Handle dropbear (sysv service)
+if command -v dropbear >/dev/null 2>&1; then
+    update-rc.d dropbear enable >/dev/null 2>&1 || true
+fi
+
+# Handle openvpn
+if [ -f /etc/systemd/system/openvpn.service ]; then
+    systemctl enable openvpn >/dev/null 2>&1 || true
+elif systemctl list-unit-files | grep -q "openvpn@"; then
+    systemctl enable openvpn@server >/dev/null 2>&1 || true
+fi
+
+# Enable UDP services if they exist
+if [ -f /etc/systemd/system/udp-mini-1.service ]; then
+    systemctl enable udp-mini-1 >/dev/null 2>&1 || true
+fi
+if [ -f /etc/systemd/system/udp-mini-2.service ]; then
+    systemctl enable udp-mini-2 >/dev/null 2>&1 || true  
+fi
+if [ -f /etc/systemd/system/udp-mini-3.service ]; then
+    systemctl enable udp-mini-3 >/dev/null 2>&1 || true
+fi
 
 # Start services in correct order
-systemctl start rc-local
-systemctl start netfilter-persistent
-systemctl start nginx
-systemctl start haproxy
-systemctl start xray
-systemctl start runn
-systemctl start dropbear
-systemctl start openvpn
-systemctl start cron
-systemctl start ws
-systemctl start vnstat
-systemctl start udp-mini-1
-systemctl start udp-mini-2
-systemctl start udp-mini-3
+systemctl start rc-local >/dev/null 2>&1 || true
+if systemctl list-unit-files | grep -q netfilter-persistent; then
+    systemctl start netfilter-persistent >/dev/null 2>&1 || true
+fi
+systemctl start nginx >/dev/null 2>&1 || true
+systemctl start haproxy >/dev/null 2>&1 || true
+systemctl start xray >/dev/null 2>&1 || true
+systemctl start cron >/dev/null 2>&1 || true
+systemctl start vnstat >/dev/null 2>&1 || true
+
+# Start custom services
+if [ -f /etc/systemd/system/runn.service ]; then
+    systemctl start runn >/dev/null 2>&1 || true
+fi
+if [ -f /etc/systemd/system/ws.service ]; then
+    systemctl start ws >/dev/null 2>&1 || true
+fi
+
+# Start dropbear
+if command -v dropbear >/dev/null 2>&1; then
+    service dropbear start >/dev/null 2>&1 || true
+fi
+
+# Start openvpn if exists
+if [ -f /etc/systemd/system/openvpn.service ]; then
+    systemctl start openvpn >/dev/null 2>&1 || true
+elif systemctl list-unit-files | grep -q "openvpn@"; then
+    systemctl start openvpn@server >/dev/null 2>&1 || true
+fi
+
+# Start UDP services
+if [ -f /etc/systemd/system/udp-mini-1.service ]; then
+    systemctl start udp-mini-1 >/dev/null 2>&1 || true
+fi
+if [ -f /etc/systemd/system/udp-mini-2.service ]; then
+    systemctl start udp-mini-2 >/dev/null 2>&1 || true
+fi
+if [ -f /etc/systemd/system/udp-mini-3.service ]; then
+    systemctl start udp-mini-3 >/dev/null 2>&1 || true
+fi
 
 # Disable SSH service untuk hindari conflict dengan dropbear
 systemctl disable ssh >/dev/null 2>&1 || true
@@ -833,20 +950,22 @@ systemctl disable ssh >/dev/null 2>&1 || true
 # Wait for services to start
 sleep 5
 
-# Final restart for stability
-systemctl restart nginx
-systemctl restart xray
-systemctl restart haproxy
-systemctl restart ws
-systemctl restart dropbear
+# Final restart for stability (only services that are actually running)
+systemctl restart nginx >/dev/null 2>&1 || true
+systemctl restart xray >/dev/null 2>&1 || true
+systemctl restart haproxy >/dev/null 2>&1 || true
+if [ -f /etc/systemd/system/ws.service ]; then
+    systemctl restart ws >/dev/null 2>&1 || true
+fi
+if command -v dropbear >/dev/null 2>&1; then
+    service dropbear restart >/dev/null 2>&1 || true
+fi
 
 # Check and fix any failed services
 sleep 3
 if systemctl --failed | grep -q failed; then
     echo "Fixing failed services..."
     systemctl reset-failed
-    # Restart failed services
-    systemctl restart nginx xray haproxy ws dropbear
 fi
 
 history -c
@@ -863,9 +982,16 @@ print_success "All Packet"
 function menu(){
     clear
     print_install "Memasang Menu Packet"
+    # Unduh menu dari repo
     wget -O menu.zip ${REPO}menu/menu.zip
-    unzip menu.zip
+    if [ ! -s menu.zip ]; then
+        echo -e "${RED}Gagal mengunduh menu.zip dari ${REPO}menu/menu.zip${NC}"
+        echo -e "${YELLOW}Mencoba sumber alternatif...${NC}"
+        wget -O menu.zip https://raw.githubusercontent.com/alrel1408/scriptaku/main/menu/menu.zip
+    fi
+    unzip -o menu.zip >/dev/null 2>&1 || unzip menu.zip
     chmod +x menu/*
+    mkdir -p /usr/local/sbin
     mv menu/* /usr/local/sbin
     rm -rf menu
     rm -rf menu.zip
@@ -917,15 +1043,25 @@ checking_sc() {\
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     
     # Buat symlink menu ke /usr/bin dan /bin juga
-    ln -sf /usr/local/sbin/menu /usr/bin/menu
-    ln -sf /usr/local/sbin/menu /bin/menu
+    if [ -f /usr/local/sbin/menu ]; then
+      ln -sf /usr/local/sbin/menu /usr/bin/menu
+      ln -sf /usr/local/sbin/menu /bin/menu
+    fi
     
-    # Pastikan semua file menu executable
-    chmod +x /usr/local/sbin/*
+    # Pastikan semua file menu executable (hanya file yang tidak berbahaya)
+    chmod +x /usr/local/sbin/menu 2>/dev/null || true
+    find /usr/local/sbin -maxdepth 1 -type f -name "menu*" -exec chmod +x {} \; 2>/dev/null || true
     
     # Update bash profile untuk auto-load PATH
-    echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/bash.bashrc
-    echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/profile
+    grep -q 'export PATH="/usr/local/sbin:$PATH"' /etc/bash.bashrc || echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/bash.bashrc
+    grep -q 'export PATH="/usr/local/sbin:$PATH"' /etc/profile || echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/profile
+    
+    # Verifikasi ketersediaan perintah menu & buat symlink tambahan jika perlu
+    if ! command -v menu >/dev/null 2>&1; then
+        [ -f /usr/local/sbin/menu ] && ln -sf /usr/local/sbin/menu /usr/bin/menu
+        [ -f /usr/local/sbin/menu ] && ln -sf /usr/local/sbin/menu /bin/menu
+        hash -r 2>/dev/null || true
+    fi
 }
 
 # Membaut Default Menu 
@@ -963,8 +1099,12 @@ EOF
 
     # Buat bash_aliases untuk shortcut
     cat >/root/.bash_aliases <<EOF
-# Menu aliases
-alias menu='/usr/local/sbin/menu'
+# Menu aliases (fallback ke /usr/bin jika ada)
+if [ -f /usr/local/sbin/menu ]; then
+  alias menu='/usr/local/sbin/menu'
+else
+  alias menu='/usr/bin/menu'
+fi
 alias m='menu'
 EOF
 
@@ -1064,46 +1204,122 @@ print_install "Enable Service"
     systemctl stop ssh >/dev/null 2>&1 || true
     systemctl stop apache2 >/dev/null 2>&1 || true
     
-    # Enable and start services in proper order
-    systemctl enable --now rc-local
-    systemctl enable --now cron  
-    systemctl enable --now netfilter-persistent
+    # Install netfilter-persistent if not exists
+    if ! systemctl list-unit-files | grep -q netfilter-persistent; then
+        apt-get install -y iptables-persistent netfilter-persistent >/dev/null 2>&1
+    fi
+    
+    # Unmask services that might be masked
+    systemctl unmask runn >/dev/null 2>&1 || true
+    systemctl unmask ws >/dev/null 2>&1 || true
+    systemctl unmask udp-mini-1 >/dev/null 2>&1 || true
+    systemctl unmask udp-mini-2 >/dev/null 2>&1 || true
+    systemctl unmask udp-mini-3 >/dev/null 2>&1 || true
+    systemctl unmask nginx >/dev/null 2>&1 || true
+    systemctl unmask xray >/dev/null 2>&1 || true
+    systemctl unmask haproxy >/dev/null 2>&1 || true
+    
+    # Reload daemon after unmask
+    systemctl daemon-reload
+    
+    # Enable basic services first
+    systemctl enable rc-local >/dev/null 2>&1 || true
+    systemctl enable cron >/dev/null 2>&1 || true
+    if systemctl list-unit-files | grep -q netfilter-persistent; then
+        systemctl enable netfilter-persistent >/dev/null 2>&1 || true
+    fi
     
     # Wait for basic services
     sleep 2
     
-    systemctl enable --now nginx
-    systemctl enable --now haproxy
-    systemctl enable --now xray
-    systemctl enable --now runn
-    systemctl enable --now ws
-    systemctl enable --now dropbear
-    systemctl enable --now openvpn
-    systemctl enable --now vnstat
-    systemctl enable --now udp-mini-1
-    systemctl enable --now udp-mini-2
-    systemctl enable --now udp-mini-3
+    # Test nginx config before enabling
+    nginx -t >/dev/null 2>&1 || true
+    
+    # Enable main services
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl enable haproxy >/dev/null 2>&1 || true
+    systemctl enable xray >/dev/null 2>&1 || true
+    
+    # Enable custom services if they exist
+    if [ -f /etc/systemd/system/runn.service ]; then
+        systemctl enable runn >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/ws.service ]; then
+        systemctl enable ws >/dev/null 2>&1 || true
+    fi
+    
+    # Handle dropbear (sysv service)
+    if command -v dropbear >/dev/null 2>&1; then
+        update-rc.d dropbear enable >/dev/null 2>&1 || true
+    fi
+    
+    # Handle openvpn
+    if [ -f /etc/systemd/system/openvpn.service ]; then
+        systemctl enable openvpn >/dev/null 2>&1 || true
+    elif systemctl list-unit-files | grep -q "openvpn@"; then
+        systemctl enable openvpn@server >/dev/null 2>&1 || true
+    fi
+    
+    systemctl enable vnstat >/dev/null 2>&1 || true
+    
+    # Enable UDP services if they exist
+    if [ -f /etc/systemd/system/udp-mini-1.service ]; then
+        systemctl enable udp-mini-1 >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/udp-mini-2.service ]; then
+        systemctl enable udp-mini-2 >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/udp-mini-3.service ]; then
+        systemctl enable udp-mini-3 >/dev/null 2>&1 || true
+    fi
     
     # Disable SSH to avoid conflict with dropbear
     systemctl disable ssh >/dev/null 2>&1 || true
     
+    # Start services
+    systemctl start rc-local >/dev/null 2>&1 || true
+    systemctl start cron >/dev/null 2>&1 || true
+    if systemctl list-unit-files | grep -q netfilter-persistent; then
+        systemctl start netfilter-persistent >/dev/null 2>&1 || true
+    fi
+    systemctl start nginx >/dev/null 2>&1 || true
+    systemctl start haproxy >/dev/null 2>&1 || true
+    systemctl start xray >/dev/null 2>&1 || true
+    systemctl start vnstat >/dev/null 2>&1 || true
+    
+    # Start custom services
+    if [ -f /etc/systemd/system/runn.service ]; then
+        systemctl start runn >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/ws.service ]; then
+        systemctl start ws >/dev/null 2>&1 || true
+    fi
+    
+    # Start dropbear
+    if command -v dropbear >/dev/null 2>&1; then
+        service dropbear start >/dev/null 2>&1 || true
+    fi
+    
+    # Start openvpn
+    if [ -f /etc/systemd/system/openvpn.service ]; then
+        systemctl start openvpn >/dev/null 2>&1 || true
+    elif systemctl list-unit-files | grep -q "openvpn@"; then
+        systemctl start openvpn@server >/dev/null 2>&1 || true
+    fi
+    
+    # Start UDP services
+    if [ -f /etc/systemd/system/udp-mini-1.service ]; then
+        systemctl start udp-mini-1 >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/udp-mini-2.service ]; then
+        systemctl start udp-mini-2 >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/systemd/system/udp-mini-3.service ]; then
+        systemctl start udp-mini-3 >/dev/null 2>&1 || true
+    fi
+    
     # Wait for all services to start
     sleep 5
-    
-    # Final restart to ensure everything is working
-    systemctl restart nginx
-    systemctl restart xray  
-    systemctl restart cron
-    systemctl restart haproxy
-    systemctl restart ws
-    systemctl restart dropbear
-    
-    # Check status and restart failed services
-    if systemctl --failed | grep -q failed; then
-        echo "Restarting failed services..."
-        systemctl reset-failed
-        systemctl restart nginx xray haproxy ws dropbear vnstat
-    fi
     
     print_success "Enable Service"
     clear
@@ -1154,7 +1370,47 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "   ${green}🎉 INSTALASI BERHASIL! 🎉${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e ""
-echo -e " ${green}✓${NC} Semua service telah aktif"
+
+# Check service status
+echo -e " ${YELLOW}📊 STATUS SERVICE:${NC}"
+services_to_check="nginx xray haproxy dropbear vnstat"
+for service in $services_to_check; do
+    if systemctl is-active --quiet $service 2>/dev/null; then
+        echo -e " ${green}✓${NC} $service - Active"
+    else
+        echo -e " ${red}✗${NC} $service - Inactive"
+    fi
+done
+
+# Check openvpn separately due to different naming
+if [ -f /etc/systemd/system/openvpn.service ] && systemctl is-active --quiet openvpn 2>/dev/null; then
+    echo -e " ${green}✓${NC} openvpn - Active"
+elif systemctl is-active --quiet openvpn@server 2>/dev/null; then
+    echo -e " ${green}✓${NC} openvpn@server - Active"
+elif [ -f /etc/systemd/system/openvpn.service ]; then
+    echo -e " ${red}✗${NC} openvpn - Inactive"
+fi
+
+# Check custom services
+custom_services="ws runn"
+for service in $custom_services; do
+    if [ -f /etc/systemd/system/$service.service ] && systemctl is-active --quiet $service 2>/dev/null; then
+        echo -e " ${green}✓${NC} $service - Active"
+    elif [ -f /etc/systemd/system/$service.service ]; then
+        echo -e " ${red}✗${NC} $service - Inactive"
+    fi
+done
+
+# Check UDP services
+for i in 1 2 3; do
+    if [ -f /etc/systemd/system/udp-mini-$i.service ] && systemctl is-active --quiet udp-mini-$i 2>/dev/null; then
+        echo -e " ${green}✓${NC} udp-mini-$i - Active"
+    elif [ -f /etc/systemd/system/udp-mini-$i.service ]; then
+        echo -e " ${red}✗${NC} udp-mini-$i - Inactive"
+    fi
+done
+
+echo -e ""
 echo -e " ${green}✓${NC} Sistem registrasi IP telah dinonaktifkan"
 echo -e " ${green}✓${NC} Menu telah terinstall dan siap digunakan"
 echo -e ""

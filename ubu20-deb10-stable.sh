@@ -236,7 +236,8 @@ function base_package() {
     clear
     ########
     print_install "Menginstall Packet Yang Dibutuhkan"
-    apt install zip pwgen openssl netcat socat cron bash-completion -y
+    # Debian 12: gunakan netcat-openbsd, bukan paket virtual 'netcat'
+    apt install zip pwgen openssl netcat-openbsd socat cron bash-completion -y
     apt install figlet -y
     apt update -y
     apt upgrade -y
@@ -258,7 +259,7 @@ function base_package() {
     sudo apt-get install -y --no-install-recommends software-properties-common
     echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
     echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
-    sudo apt-get install -y speedtest-cli vnstat libnss3-dev libnspr4-dev pkg-config libpam0g-dev libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-nss-dev flex bison make libnss3-tools libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr libxml-parser-perl build-essential gcc g++ python htop lsof tar wget curl ruby zip unzip p7zip-full python3-pip libc6 util-linux build-essential msmtp-mta ca-certificates bsd-mailx iptables iptables-persistent netfilter-persistent net-tools openssl ca-certificates gnupg gnupg2 ca-certificates lsb-release gcc shc make cmake git screen socat xz-utils apt-transport-https gnupg1 dnsutils cron bash-completion ntpdate chrony jq openvpn easy-rsa
+    sudo apt-get install -y speedtest-cli vnstat libnss3-dev libnspr4-dev pkg-config libpam0g-dev libcap-ng-dev libcap-ng-utils libselinux1-dev libcurl4-nss-dev flex bison make libnss3-tools libevent-dev bc rsyslog dos2unix zlib1g-dev libssl-dev libsqlite3-dev sed dirmngr libxml-parser-perl build-essential gcc g++ python htop lsof psmisc tar wget curl ruby zip unzip p7zip-full python3-pip libc6 util-linux build-essential msmtp-mta ca-certificates bsd-mailx iptables iptables-persistent netfilter-persistent net-tools openssl ca-certificates gnupg gnupg2 ca-certificates lsb-release gcc shc make cmake git screen socat xz-utils apt-transport-https gnupg1 dnsutils cron bash-completion ntpdate chrony jq openvpn easy-rsa
     
     # Pastikan netfilter-persistent terinstall dengan benar
     systemctl enable netfilter-persistent >/dev/null 2>&1 || true
@@ -366,11 +367,13 @@ print_install "Memasang SSL Pada Domain"
     rm -rf /etc/xray/xray.key
     rm -rf /etc/xray/xray.crt
     domain=$(cat /root/domain)
-    STOPWEBSERVER=$(lsof -i:80 | cut -d' ' -f1 | awk 'NR==2 {print $1}')
+    # Pastikan tidak ada service yang menahan port 80 sebelum proses ACME
     rm -rf /root/.acme.sh
-    mkdir /root/.acme.sh
-    systemctl stop $STOPWEBSERVER
-    systemctl stop nginx
+    mkdir -p /root/.acme.sh
+    # Stop web server umum secara aman (abaikan error jika tidak ada)
+    systemctl stop nginx >/dev/null 2>&1 || true
+    systemctl stop apache2 >/dev/null 2>&1 || true
+    fuser -k 80/tcp >/dev/null 2>&1 || true
     curl https://acme-install.netlify.app/acme.sh -o /root/.acme.sh/acme.sh
     chmod +x /root/.acme.sh/acme.sh
     /root/.acme.sh/acme.sh --upgrade --auto-upgrade
@@ -567,7 +570,12 @@ sed -i '$ i\echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6' /etc/rc.local
 ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
 
 # set locale
-sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
+    sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
+    
+    # Pastikan port SSH terbuka (hindari lockout)
+    iptables -I INPUT -p tcp --dport 22 -j ACCEPT
+    iptables-save > /etc/iptables.up.rules
+    netfilter-persistent save >/dev/null 2>&1 || true
 print_success "Password SSH"
 }
 
@@ -636,8 +644,8 @@ print_install "Menginstall Dropbear"
 apt-get install dropbear -y > /dev/null 2>&1
 wget -q -O /etc/default/dropbear "${REPO}config/dropbear.conf"
 chmod +x /etc/default/dropbear
-/etc/init.d/dropbear restart
-/etc/init.d/dropbear status
+    /etc/init.d/dropbear restart
+    /etc/init.d/dropbear status || true
 print_success "Dropbear"
 }
 
@@ -944,8 +952,7 @@ if [ -f /etc/systemd/system/udp-mini-3.service ]; then
     systemctl start udp-mini-3 >/dev/null 2>&1 || true
 fi
 
-# Disable SSH service untuk hindari conflict dengan dropbear
-systemctl disable ssh >/dev/null 2>&1 || true
+# Jangan disable SSH agar tidak kehilangan akses
 
 # Wait for services to start
 sleep 5
@@ -1273,8 +1280,8 @@ print_install "Enable Service"
         systemctl enable udp-mini-3 >/dev/null 2>&1 || true
     fi
     
-    # Disable SSH to avoid conflict with dropbear
-    systemctl disable ssh >/dev/null 2>&1 || true
+    # Jangan disable SSH di Debian 12 untuk mencegah lockout (biarkan coexist port 22)
+    # Jika perlu pindahkan dropbear ke port lain via config
     
     # Start services
     systemctl start rc-local >/dev/null 2>&1 || true

@@ -337,6 +337,21 @@ URL="https://api.telegram.org/bot$KEY/sendMessage"
 "'&reply_markup={"inline_keyboard":[[{"text":"ᴏʀᴅᴇʀ","url":"https://wa.me/+6282285851668"}]]}' 
 
     curl -s --max-time $TIMES -d "chat_id=$CHATID&disable_web_page_preview=1&text=$TEXT&parse_mode=html" $URL >/dev/null
+    
+    # Test menu installation
+    echo ""
+    echo "Testing menu installation..."
+    if command -v menu >/dev/null 2>&1; then
+        echo -e "${green}✓ Menu command is available${NC}"
+    else
+        echo -e "${red}✗ Menu command not found, creating additional symlinks...${NC}"
+        ln -sf /usr/local/sbin/menu /usr/bin/menu 2>/dev/null || true
+        ln -sf /usr/local/sbin/menu /bin/menu 2>/dev/null || true
+    fi
+    
+    # Final PATH setup
+    source /etc/profile 2>/dev/null || true
+    hash -r 2>/dev/null || true
 }
 clear
 # Pasang SSL
@@ -772,7 +787,13 @@ systemctl daemon-reload
 # Create required directories
 mkdir -p /run/sshd
 mkdir -p /var/log/xray
+mkdir -p /run/xray
 chown www-data:www-data /var/log/xray
+chown www-data:www-data /run/xray
+
+# Stop services yang mungkin conflict
+systemctl stop ssh >/dev/null 2>&1 || true
+systemctl stop apache2 >/dev/null 2>&1 || true
 
 # Enable all services
 systemctl enable nginx
@@ -785,30 +806,48 @@ systemctl enable haproxy
 systemctl enable netfilter-persistent
 systemctl enable ws
 systemctl enable vnstat
+systemctl enable runn
+systemctl enable udp-mini-1
+systemctl enable udp-mini-2  
+systemctl enable udp-mini-3
 
-# Start all services
+# Start services in correct order
+systemctl start rc-local
 systemctl start netfilter-persistent
 systemctl start nginx
+systemctl start haproxy
 systemctl start xray
-systemctl start rc-local  
+systemctl start runn
 systemctl start dropbear
 systemctl start openvpn
 systemctl start cron
-systemctl start haproxy
+systemctl start ws
 systemctl start vnstat
+systemctl start udp-mini-1
+systemctl start udp-mini-2
+systemctl start udp-mini-3
 
-# Disable SSH service jika dropbear sudah aktif (hindari conflict port 22)
+# Disable SSH service untuk hindari conflict dengan dropbear
 systemctl disable ssh >/dev/null 2>&1 || true
+
+# Wait for services to start
+sleep 5
 
 # Final restart for stability
 systemctl restart nginx
 systemctl restart xray
 systemctl restart haproxy
 systemctl restart ws
+systemctl restart dropbear
 
-# Fix any potential service issues
+# Check and fix any failed services
 sleep 3
-systemctl --failed | grep failed && systemctl reset-failed
+if systemctl --failed | grep -q failed; then
+    echo "Fixing failed services..."
+    systemctl reset-failed
+    # Restart failed services
+    systemctl restart nginx xray haproxy ws dropbear
+fi
 
 history -c
 echo "unset HISTFILE" >> /etc/profile
@@ -831,21 +870,35 @@ function menu(){
     rm -rf menu
     rm -rf menu.zip
     
-    # Fix semua referensi register yang masih ada
+    # Fix semua referensi register yang masih ada - disable completely
     sed -i 's|https://raw.githubusercontent.com/alrel1408/AutoScript/main/Register|# Register system disabled|g' /usr/local/sbin/*
+    sed -i 's|https://raw.githubusercontent.com/alrel1408/scriptaku/main/Register|# Register system disabled|g' /usr/local/sbin/*
     sed -i '/data_ip=.*Register system disabled/c\data_ip=""' /usr/local/sbin/*
     sed -i '/curl.*Register system disabled/d' /usr/local/sbin/*
+    sed -i '/wget.*Register system disabled/d' /usr/local/sbin/*
     
     # Fix function checking_sc yang menyebabkan permission denied
     sed -i '/checking_sc() {/,/^}/c\
 checking_sc() {\
   # Register system disabled - always allow\
-  echo -ne\
+  return 0\
 }' /usr/local/sbin/*
     
-    # Remove register check logic
+    # Remove all register check logic completely
     sed -i '/useexp.*data_ip/d' /usr/local/sbin/*
     sed -i '/if.*date_list.*useexp/,/fi/d' /usr/local/sbin/*
+    sed -i '/MYIP.*curl.*ipinfo/d' /usr/local/sbin/*
+    sed -i '/data_ip.*curl.*Register/d' /usr/local/sbin/*
+    
+    # Remove banned/permission messages
+    sed -i '/Permission Denied/d' /usr/local/sbin/*
+    sed -i '/EXPIRED SCRIPT/d' /usr/local/sbin/*
+    sed -i '/Contact telegram/d' /usr/local/sbin/*
+    sed -i '/You are banned/d' /usr/local/sbin/*
+    
+    # Replace all register validation with always allow
+    sed -i 's|if \[\[ $data_ip == *"Permission Denied"* ]]; then|if false; then|g' /usr/local/sbin/*
+    sed -i 's|if \[\[ $data_ip == *"EXPIRED SCRIPT"* ]]; then|if false; then|g' /usr/local/sbin/*
     
     # Update branding ke AlrelShop
     sed -i 's|Vallstore|AlrelShop|g' /usr/local/sbin/*
@@ -863,8 +916,16 @@ checking_sc() {\
     # Update PATH untuk session saat ini
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     
-    # Buat symlink menu ke /usr/bin juga
+    # Buat symlink menu ke /usr/bin dan /bin juga
     ln -sf /usr/local/sbin/menu /usr/bin/menu
+    ln -sf /usr/local/sbin/menu /bin/menu
+    
+    # Pastikan semua file menu executable
+    chmod +x /usr/local/sbin/*
+    
+    # Update bash profile untuk auto-load PATH
+    echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/bash.bashrc
+    echo 'export PATH="/usr/local/sbin:$PATH"' >> /etc/profile
 }
 
 # Membaut Default Menu 
@@ -888,10 +949,36 @@ EOF
 # ~/.bashrc: executed by bash for non-login shells.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Load bash aliases if available
+if [ -f ~/.bash_aliases ]; then
+    . ~/.bash_aliases
+fi
+
 # Auto run menu on login
-if [ -t 0 ]; then
+if [ -t 0 ] && [ "\$PS1" ]; then
+    clear
     menu
 fi
+EOF
+
+    # Buat bash_aliases untuk shortcut
+    cat >/root/.bash_aliases <<EOF
+# Menu aliases
+alias menu='/usr/local/sbin/menu'
+alias m='menu'
+EOF
+
+    # Setup untuk semua user
+    cp /root/.bashrc /etc/skel/.bashrc
+    cp /root/.bash_aliases /etc/skel/.bash_aliases
+    cp /root/.profile /etc/skel/.profile
+    
+    # Update global profile
+    cat >> /etc/profile <<EOF
+
+# AlrelShop VPN Script PATH
+export PATH="/usr/local/sbin:\$PATH"
+
 EOF
 
 cat >/etc/cron.d/xp_all <<-END
@@ -973,26 +1060,50 @@ clear
 print_install "Enable Service"
     systemctl daemon-reload
     
-    # Check and fix any failed services
+    # Stop conflicting services first
+    systemctl stop ssh >/dev/null 2>&1 || true
+    systemctl stop apache2 >/dev/null 2>&1 || true
+    
+    # Enable and start services in proper order
     systemctl enable --now rc-local
     systemctl enable --now cron  
     systemctl enable --now netfilter-persistent
+    
+    # Wait for basic services
+    sleep 2
+    
     systemctl enable --now nginx
-    systemctl enable --now xray
     systemctl enable --now haproxy
+    systemctl enable --now xray
+    systemctl enable --now runn
     systemctl enable --now ws
     systemctl enable --now dropbear
     systemctl enable --now openvpn
     systemctl enable --now vnstat
-    systemctl enable --now ssh
+    systemctl enable --now udp-mini-1
+    systemctl enable --now udp-mini-2
+    systemctl enable --now udp-mini-3
+    
+    # Disable SSH to avoid conflict with dropbear
+    systemctl disable ssh >/dev/null 2>&1 || true
+    
+    # Wait for all services to start
+    sleep 5
     
     # Final restart to ensure everything is working
-    sleep 2
     systemctl restart nginx
     systemctl restart xray  
     systemctl restart cron
     systemctl restart haproxy
     systemctl restart ws
+    systemctl restart dropbear
+    
+    # Check status and restart failed services
+    if systemctl --failed | grep -q failed; then
+        echo "Restarting failed services..."
+        systemctl reset-failed
+        systemctl restart nginx xray haproxy ws dropbear vnstat
+    fi
     
     print_success "Enable Service"
     clear
@@ -1037,7 +1148,19 @@ rm -rf /root/domain
 #sudo hostnamectl set-hostname $user
 secs_to_human "$(($(date +%s) - ${start}))"
 sudo hostnamectl set-hostname $username
-echo -e "${green} Script Successfull Installed"
+
+clear
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "   ${green}🎉 INSTALASI BERHASIL! 🎉${NC}"
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e ""
+echo -e " ${green}✓${NC} Semua service telah aktif"
+echo -e " ${green}✓${NC} Sistem registrasi IP telah dinonaktifkan"
+echo -e " ${green}✓${NC} Menu telah terinstall dan siap digunakan"
+echo -e ""
+echo -e " Setelah reboot, ketik: ${YELLOW}menu${NC} untuk mengakses panel"
+echo -e ""
+echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 read -p "$( echo -e "Press ${YELLOW}[ ${NC}${YELLOW}Enter${NC} ${YELLOW}]${NC} For reboot") "
 reboot

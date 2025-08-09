@@ -570,7 +570,7 @@ sed -i '$ i\echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6' /etc/rc.local
 ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
 
 # set locale
-    sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
+sed -i 's/AcceptEnv/#AcceptEnv/g' /etc/ssh/sshd_config
     
     # Pastikan port SSH terbuka (hindari lockout)
     iptables -I INPUT -p tcp --dport 22 -j ACCEPT
@@ -644,8 +644,18 @@ print_install "Menginstall Dropbear"
 apt-get install dropbear -y > /dev/null 2>&1
 wget -q -O /etc/default/dropbear "${REPO}config/dropbear.conf"
 chmod +x /etc/default/dropbear
-    /etc/init.d/dropbear restart
-    /etc/init.d/dropbear status || true
+    # Buat systemd override agar EnvironmentFile dibaca dan variabel terisi
+    mkdir -p /etc/systemd/system/dropbear.service.d
+    cat > /etc/systemd/system/dropbear.service.d/override.conf <<'OVR'
+[Service]
+EnvironmentFile=-/etc/default/dropbear
+ExecStart=
+ExecStart=/usr/sbin/dropbear -EF -p ${DROPBEAR_PORT:-22} -W ${DROPBEAR_RECEIVE_WINDOW:-65536} ${DROPBEAR_EXTRA_ARGS}
+OVR
+    systemctl daemon-reload
+    systemctl enable --now dropbear >/dev/null 2>&1 || true
+    systemctl restart dropbear || true
+    systemctl status dropbear | head -n 20 || true
 print_success "Dropbear"
 }
 
@@ -688,8 +698,13 @@ elif systemctl list-unit-files | grep -q "openvpn@"; then
     systemctl enable openvpn@server >/dev/null 2>&1 || true
     systemctl start openvpn@server >/dev/null 2>&1 || true
 else
-    # Fallback to init.d script
-    /etc/init.d/openvpn restart >/dev/null 2>&1 || true
+    # Debian 12 biasanya tidak memiliki init.d/openvpn; install paket openvpn jika tidak ada
+    apt-get install -y openvpn easy-rsa >/dev/null 2>&1 || true
+    if systemctl list-unit-files | grep -q "openvpn@"; then
+        systemctl enable --now openvpn@server >/dev/null 2>&1 || true
+    else
+        echo "OpenVPN service tidak tersedia, dilewati" >/dev/null
+    fi
 fi
 print_success "OpenVPN"
 }
@@ -827,6 +842,26 @@ apt autoremove -y >/dev/null 2>&1
 print_success "ePro WebSocket Proxy"
 }
 
+# Verifikasi & perbaiki ws dan haproxy agar tidak merah
+function verify_ws_haproxy(){
+    echo "Verifying ws & haproxy..."
+    # Pastikan cert untuk haproxy ada
+    if [ -s /etc/xray/xray.crt ] && [ -s /etc/xray/xray.key ]; then
+        cat /etc/xray/xray.crt /etc/xray/xray.key > /etc/haproxy/hap.pem 2>/dev/null || true
+    fi
+    
+    # Test config haproxy jika bin tersedia
+    if command -v haproxy >/dev/null 2>&1; then
+        haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null 2>&1 || true
+    fi
+    
+    systemctl daemon-reload
+    systemctl unmask haproxy ws >/dev/null 2>&1 || true
+    systemctl enable haproxy ws >/dev/null 2>&1 || true
+    systemctl restart haproxy >/dev/null 2>&1 || true
+    systemctl restart ws >/dev/null 2>&1 || true
+}
+
 function ins_restart(){
 clear
 print_install "Restarting  All Packet"
@@ -859,6 +894,10 @@ systemctl unmask udp-mini-3 >/dev/null 2>&1 || true
 systemctl unmask nginx >/dev/null 2>&1 || true
 systemctl unmask xray >/dev/null 2>&1 || true
 systemctl unmask haproxy >/dev/null 2>&1 || true
+systemctl unmask limitvmess >/dev/null 2>&1 || true
+systemctl unmask limitvless >/dev/null 2>&1 || true
+systemctl unmask limittrojan >/dev/null 2>&1 || true
+systemctl unmask limitshadowsocks >/dev/null 2>&1 || true
 
 # Reload daemon after unmask
 systemctl daemon-reload
@@ -899,7 +938,7 @@ elif systemctl list-unit-files | grep -q "openvpn@"; then
     systemctl enable openvpn@server >/dev/null 2>&1 || true
 fi
 
-# Enable UDP services if they exist
+# Enable UDP/limit services if they exist
 if [ -f /etc/systemd/system/udp-mini-1.service ]; then
     systemctl enable udp-mini-1 >/dev/null 2>&1 || true
 fi
@@ -909,6 +948,12 @@ fi
 if [ -f /etc/systemd/system/udp-mini-3.service ]; then
     systemctl enable udp-mini-3 >/dev/null 2>&1 || true
 fi
+for s in limitvmess limitvless limittrojan limitshadowsocks; do
+    if [ -f /etc/systemd/system/$s.service ]; then
+        chmod 644 /etc/systemd/system/$s.service
+        systemctl enable $s >/dev/null 2>&1 || true
+    fi
+done
 
 # Start services in correct order
 systemctl start rc-local >/dev/null 2>&1 || true
@@ -941,7 +986,7 @@ elif systemctl list-unit-files | grep -q "openvpn@"; then
     systemctl start openvpn@server >/dev/null 2>&1 || true
 fi
 
-# Start UDP services
+# Start UDP/limit services
 if [ -f /etc/systemd/system/udp-mini-1.service ]; then
     systemctl start udp-mini-1 >/dev/null 2>&1 || true
 fi
@@ -951,6 +996,11 @@ fi
 if [ -f /etc/systemd/system/udp-mini-3.service ]; then
     systemctl start udp-mini-3 >/dev/null 2>&1 || true
 fi
+for s in limitvmess limitvless limittrojan limitshadowsocks; do
+    if systemctl list-unit-files | grep -q "${s}.service"; then
+        systemctl start $s >/dev/null 2>&1 || true
+    fi
+done
 
 # Jangan disable SSH agar tidak kehilangan akses
 
@@ -1051,7 +1101,7 @@ checking_sc() {\
     
     # Buat symlink menu ke /usr/bin dan /bin juga
     if [ -f /usr/local/sbin/menu ]; then
-      ln -sf /usr/local/sbin/menu /usr/bin/menu
+    ln -sf /usr/local/sbin/menu /usr/bin/menu
       ln -sf /usr/local/sbin/menu /bin/menu
     fi
     
@@ -1225,6 +1275,10 @@ print_install "Enable Service"
     systemctl unmask nginx >/dev/null 2>&1 || true
     systemctl unmask xray >/dev/null 2>&1 || true
     systemctl unmask haproxy >/dev/null 2>&1 || true
+    systemctl unmask limitvmess >/dev/null 2>&1 || true
+    systemctl unmask limitvless >/dev/null 2>&1 || true
+    systemctl unmask limittrojan >/dev/null 2>&1 || true
+    systemctl unmask limitshadowsocks >/dev/null 2>&1 || true
     
     # Reload daemon after unmask
     systemctl daemon-reload
@@ -1269,7 +1323,7 @@ print_install "Enable Service"
     
     systemctl enable vnstat >/dev/null 2>&1 || true
     
-    # Enable UDP services if they exist
+    # Enable UDP/limit services if they exist
     if [ -f /etc/systemd/system/udp-mini-1.service ]; then
         systemctl enable udp-mini-1 >/dev/null 2>&1 || true
     fi
@@ -1279,6 +1333,13 @@ print_install "Enable Service"
     if [ -f /etc/systemd/system/udp-mini-3.service ]; then
         systemctl enable udp-mini-3 >/dev/null 2>&1 || true
     fi
+    # Enable limit services
+    for s in limitvmess limitvless limittrojan limitshadowsocks; do
+        if [ -f /etc/systemd/system/$s.service ]; then
+            chmod 644 /etc/systemd/system/$s.service
+            systemctl enable $s >/dev/null 2>&1 || true
+        fi
+    done
     
     # Jangan disable SSH di Debian 12 untuk mencegah lockout (biarkan coexist port 22)
     # Jika perlu pindahkan dropbear ke port lain via config
@@ -1314,7 +1375,7 @@ print_install "Enable Service"
         systemctl start openvpn@server >/dev/null 2>&1 || true
     fi
     
-    # Start UDP services
+    # Start UDP/limit services
     if [ -f /etc/systemd/system/udp-mini-1.service ]; then
         systemctl start udp-mini-1 >/dev/null 2>&1 || true
     fi
@@ -1324,6 +1385,11 @@ print_install "Enable Service"
     if [ -f /etc/systemd/system/udp-mini-3.service ]; then
         systemctl start udp-mini-3 >/dev/null 2>&1 || true
     fi
+    for s in limitvmess limitvless limittrojan limitshadowsocks; do
+        if systemctl list-unit-files | grep -q "${s}.service"; then
+            systemctl start $s >/dev/null 2>&1 || true
+        fi
+    done
     
     # Wait for all services to start
     sleep 5
@@ -1353,6 +1419,7 @@ clear
     ins_swab
     ins_Fail2ban
     ins_epro
+    verify_ws_haproxy
     ins_restart
     menu
     profile
